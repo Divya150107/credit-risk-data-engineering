@@ -14,8 +14,6 @@ ipykernel
 matplotlib
 seaborn
 
-# PySpark
-pyspark
 
 # Environment variables
 python-dotenv

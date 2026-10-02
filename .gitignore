@@ -1,0 +1,30 @@
+# Virtual environment
+creditde/
+venv/
+.venv/
+
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Data files
+data/raw/*
+data/processed/*
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+
+# Secrets
+*.pem
+*.key

@@ -1,0 +1,21 @@
+# Data manipulation
+pandas
+numpy
+
+# Database connectivity
+sqlalchemy
+mysql-connector-python
+
+# Jupyter support
+jupyter
+ipykernel
+
+# Data visualization / analysis
+matplotlib
+seaborn
+
+# PySpark
+pyspark
+
+# Environment variables
+python-dotenv

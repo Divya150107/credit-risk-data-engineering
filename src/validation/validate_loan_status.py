@@ -1,131 +1,213 @@
+import os
+from pathlib import Path
+
 import mysql.connector
 from dotenv import load_dotenv
-from pathlib import Path
-import os
 
 
-# ============================================================
-# PROJECT CONFIGURATION
-# ============================================================
+# -------------------------------------------------------------
+# Project configuration
+# -------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 load_dotenv(PROJECT_ROOT / ".env")
 
 
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
-connection = mysql.connector.connect(
-    host=os.getenv("MYSQL_HOST"),
-    user=os.getenv("MYSQL_USER"),
-    password=os.getenv("MYSQL_PASSWORD"),
-    database=os.getenv("MYSQL_DATABASE")
-)
-
-cursor = connection.cursor()
-
-print("Connected to MySQL successfully.")
-
-
-# ============================================================
-# GET STATUS COUNTS FROM STAGING
-# ============================================================
-
-print("\nReading loan status counts from staging...")
-
-cursor.execute(
-    """
-    SELECT
-        loan_status,
-        COUNT(*) AS record_count
-    FROM staging_loan_data
-    GROUP BY loan_status
-    """
-)
-
-staging_counts = {
-    status: count
-    for status, count in cursor.fetchall()
+DB_CONFIG = {
+    "host": os.getenv("MYSQL_HOST"),
+    "user": os.getenv("MYSQL_USER"),
+    "password": os.getenv("MYSQL_PASSWORD"),
+    "database": os.getenv("MYSQL_DATABASE")
 }
 
 
-# ============================================================
-# GET STATUS COUNTS FROM FACT TABLE
-# ============================================================
+# -------------------------------------------------------------
+# Database connection
+# -------------------------------------------------------------
 
-print("Reading loan status counts from fact table...")
-
-cursor.execute(
+def get_connection():
     """
-    SELECT
-        loan_status,
-        COUNT(*) AS record_count
-    FROM fact_loan
-    GROUP BY loan_status
+    Create and return a MySQL database connection.
     """
-)
 
-warehouse_counts = {
-    status: count
-    for status, count in cursor.fetchall()
-}
-
-
-# ============================================================
-# COMPARE RESULTS
-# ============================================================
-
-print("\n============================================================")
-print("LOAN STATUS RECONCILIATION")
-print("============================================================")
-
-all_statuses = set(staging_counts) | set(warehouse_counts)
-
-total_mismatches = 0
-
-for status in sorted(all_statuses):
-
-    staging_count = staging_counts.get(status, 0)
-
-    warehouse_count = warehouse_counts.get(status, 0)
-
-    difference = staging_count - warehouse_count
-
-    print(
-        f"{str(status):55} "
-        f"Staging: {staging_count:10,} | "
-        f"Warehouse: {warehouse_count:10,} | "
-        f"Difference: {difference:8,}"
+    return mysql.connector.connect(
+        **DB_CONFIG
     )
 
-    if difference != 0:
-        total_mismatches += 1
+
+# -------------------------------------------------------------
+# Loan status reconciliation
+# -------------------------------------------------------------
+
+def validate_loan_status():
+    """
+    Compare loan-status counts between the staging table
+    and the fact table.
+
+    The purpose of this validation is to ensure that the
+    warehouse loading process did not lose or alter loan
+    status records.
+    """
+
+    print("\n" + "=" * 60)
+    print("STEP 7: LOAN STATUS RECONCILIATION")
+    print("=" * 60)
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+
+        # -----------------------------------------------------
+        # Get loan-status counts from staging
+        # -----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                loan_status,
+                COUNT(*) AS loan_count
+            FROM staging_loan_data
+            GROUP BY loan_status
+            ORDER BY loan_status
+            """
+        )
+
+        staging_results = cursor.fetchall()
+
+        staging_status = {
+            row[0]: row[1]
+            for row in staging_results
+        }
+
+        # -----------------------------------------------------
+        # Get loan-status counts from fact table
+        # -----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                loan_status,
+                COUNT(*) AS loan_count
+            FROM fact_loan
+            GROUP BY loan_status
+            ORDER BY loan_status
+            """
+        )
+
+        fact_results = cursor.fetchall()
+
+        fact_status = {
+            row[0]: row[1]
+            for row in fact_results
+        }
+
+        # -----------------------------------------------------
+        # Compare all statuses
+        # -----------------------------------------------------
+
+        all_statuses = sorted(
+            set(staging_status) |
+            set(fact_status)
+        )
+
+        mismatches = []
+
+        print(
+            f"\n{'Loan Status':<55}"
+            f"{'Staging':>15}"
+            f"{'Fact':>15}"
+        )
+
+        print("-" * 85)
+
+        for status in all_statuses:
+
+            staging_count = staging_status.get(
+                status,
+                0
+            )
+
+            fact_count = fact_status.get(
+                status,
+                0
+            )
+
+            print(
+                f"{status:<55}"
+                f"{staging_count:>15,}"
+                f"{fact_count:>15,}"
+            )
+
+            if staging_count != fact_count:
+
+                mismatches.append(
+                    {
+                        "loan_status": status,
+                        "staging_count": staging_count,
+                        "fact_count": fact_count
+                    }
+                )
+
+        # -----------------------------------------------------
+        # Final result
+        # -----------------------------------------------------
+
+        print("\n" + "-" * 60)
+
+        if mismatches:
+
+            print(
+                "✗ STATUS RECONCILIATION FAILED"
+            )
+
+            print(
+                f"Mismatched statuses: "
+                f"{len(mismatches)}"
+            )
+
+            for mismatch in mismatches:
+
+                print(
+                    f"\nStatus: "
+                    f"{mismatch['loan_status']}"
+                )
+
+                print(
+                    f"Staging: "
+                    f"{mismatch['staging_count']:,}"
+                )
+
+                print(
+                    f"Fact: "
+                    f"{mismatch['fact_count']:,}"
+                )
+
+            raise ValueError(
+                "Loan-status reconciliation failed."
+            )
+
+        print(
+            "✓ All loan-status counts match."
+        )
+
+        print(
+            "✓ STATUS RECONCILIATION PASSED"
+        )
+
+        return True
+
+    finally:
+
+        cursor.close()
+        connection.close()
 
 
-# ============================================================
-# FINAL RESULT
-# ============================================================
+# -------------------------------------------------------------
+# Standalone execution
+# -------------------------------------------------------------
 
-print("\n============================================================")
-print("STATUS RECONCILIATION COMPLETE")
-print("============================================================")
+if __name__ == "__main__":
 
-print(f"Status mismatches : {total_mismatches}")
-
-
-if total_mismatches == 0:
-    print("STATUS: PASSED")
-else:
-    print("STATUS: FAILED")
-
-
-# ============================================================
-# CLOSE CONNECTION
-# ============================================================
-
-cursor.close()
-connection.close()
-
-print("\nMySQL connection closed.")
+    validate_loan_status()
